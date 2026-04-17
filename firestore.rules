@@ -1,0 +1,125 @@
+// firestore.rules
+// Production-grade Firestore security rules for Wealth Building LLC
+// Deploy with: firebase deploy --only firestore:rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper Functions ─────────────────────────────────────────
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+
+    function isMember() {
+      return isAuthenticated() && getUserRole() in ['member', 'admin'];
+    }
+
+    // ─── Users Collection ─────────────────────────────────────────
+    match /users/{userId} {
+      // User can read their own profile; admin can read all
+      allow read: if isOwner(userId) || isAdmin();
+      // User can create their own profile on signup
+      allow create: if isOwner(userId) && request.resource.data.role == 'pending';
+      // Only admins can update role, sharePercent, isActive
+      allow update: if isOwner(userId) && 
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['role', 'sharePercent', 'isActive', 'approvedBy'])
+        || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Member Months ────────────────────────────────────────────
+    match /memberMonths/{docId} {
+      allow read: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || isAdmin());
+      // Only server-side (admin SDK) should write; no client writes
+      allow write: if isAdmin();
+    }
+
+    // ─── Payments ─────────────────────────────────────────────────
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || isAdmin());
+      // Members can create (initiate) payments but NOT self-approve
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status == 'pending';
+      // Only admins can update (approve/reject)
+      allow update: if isAdmin();
+      allow delete: if false; // Never delete payment records
+    }
+
+    // ─── Contributions ────────────────────────────────────────────
+    match /contributions/{docId} {
+      allow read: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || isAdmin());
+      // Only admins can create (on payment approval)
+      allow write: if isAdmin();
+    }
+
+    // ─── Income ───────────────────────────────────────────────────
+    match /income/{docId} {
+      // All members can read income (for profit share transparency)
+      allow read: if isMember();
+      // Only admins can write
+      allow write: if isAdmin();
+    }
+
+    // ─── Withdrawals ──────────────────────────────────────────────
+    match /withdrawals/{docId} {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+
+    // ─── Exit Requests ────────────────────────────────────────────
+    match /exitRequests/{docId} {
+      allow read: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || isAdmin());
+      // Member can create their own exit request
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status == 'pending';
+      // Only admin can update (approve/reject)
+      allow update: if isAdmin();
+    }
+
+    // ─── Milestones ───────────────────────────────────────────────
+    match /milestones/{docId} {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+
+    // ─── Audit Logs ───────────────────────────────────────────────
+    match /auditLogs/{docId} {
+      // Only admins can read audit logs
+      allow read: if isAdmin();
+      // No client writes — audit logs only written by admin SDK
+      allow write: if false;
+    }
+
+    // ─── Settings ─────────────────────────────────────────────────
+    match /settings/{docId} {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

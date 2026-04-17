@@ -1,0 +1,13 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": ".next",
+    "cleanUrls": true,
+    "rewrites": [
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}
