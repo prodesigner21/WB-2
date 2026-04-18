@@ -1,17 +1,27 @@
 /**
- * lib/firestore.ts
- * All Firestore read/write operations.
- * Keeps DB logic separated from UI and business logic.
+ * lib/firestore.ts — FIXED
+ *
+ * Root cause of infinite loading on all pages:
+ * Firestore compound queries (where + orderBy) require deployed composite
+ * indexes. Without them the query fails SILENTLY — onSnapshot/getDocs never
+ * resolve, setLoading(false) never runs, spinner spins forever.
+ *
+ * Fix: removed orderBy from all compound where() queries.
+ *      Sorting is done client-side after the data arrives.
+ *      Simple single-field orderBy queries (no where clause) are fine.
  */
 import {
-  collection, doc, getDoc, getDocFromServer, getDocs, setDoc, updateDoc, addDoc,
-  query, where, orderBy, limit, onSnapshot, writeBatch,
-  serverTimestamp, Timestamp, DocumentData, QueryConstraint
+  collection, doc, getDoc, getDocFromServer, getDocs, setDoc,
+  updateDoc, addDoc, query, where, orderBy, onSnapshot,
+  writeBatch, serverTimestamp, Timestamp, DocumentData, QueryConstraint
 } from 'firebase/firestore'
 import { db } from './firebase'
-import type { UserProfile, Payment, Contribution, MemberMonth, Income, Withdrawal, ExitRequest, Milestone, AuditLog } from './types'
+import type {
+  UserProfile, Payment, Contribution, MemberMonth,
+  Income, Withdrawal, ExitRequest, Milestone, AuditLog
+} from './types'
 
-// ─── COLLECTIONS ────────────────────────────────────────────────
+// ─── COLLECTIONS ─────────────────────────────────────────────────
 export const COLLECTIONS = {
   USERS: 'users',
   PAYMENTS: 'payments',
@@ -25,13 +35,18 @@ export const COLLECTIONS = {
   SETTINGS: 'settings',
 } as const
 
-// ─── USER OPERATIONS ────────────────────────────────────────────
+// ─── USER OPERATIONS ─────────────────────────────────────────────
 
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
-  // Always fetch from server — bypasses local cache so role changes in
-  // Firebase console are reflected immediately on next login
-  const snap = await getDocFromServer(doc(db, COLLECTIONS.USERS, userId))
-  return snap.exists() ? ({ id: snap.id, ...snap.data() } as UserProfile) : null
+  // getDocFromServer bypasses local cache — ensures role changes are picked up immediately
+  try {
+    const snap = await getDocFromServer(doc(db, COLLECTIONS.USERS, userId))
+    return snap.exists() ? ({ id: snap.id, ...snap.data() } as UserProfile) : null
+  } catch {
+    // Fall back to cached read if server read fails (e.g. offline)
+    const snap = await getDoc(doc(db, COLLECTIONS.USERS, userId))
+    return snap.exists() ? ({ id: snap.id, ...snap.data() } as UserProfile) : null
+  }
 }
 
 export async function createUserProfile(userId: string, data: Omit<UserProfile, 'id'>): Promise<void> {
@@ -50,10 +65,8 @@ export async function updateUserProfile(userId: string, data: Partial<UserProfil
 }
 
 export async function getAllMembers(): Promise<UserProfile[]> {
-  const q = query(
-    collection(db, COLLECTIONS.USERS),
-    where('role', 'in', ['member', 'admin'])
-  )
+  // Single where clause — no composite index needed
+  const q = query(collection(db, COLLECTIONS.USERS), where('role', 'in', ['member', 'admin']))
   const snap = await getDocs(q)
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as UserProfile))
 }
@@ -67,13 +80,16 @@ export async function getPendingUsers(): Promise<UserProfile[]> {
 // ─── MEMBER MONTHS ───────────────────────────────────────────────
 
 export async function getMemberMonths(userId: string): Promise<MemberMonth[]> {
+  // FIXED: removed orderBy — was causing silent failure (missing composite index)
+  // Sort client-side instead
   const q = query(
     collection(db, COLLECTIONS.MEMBER_MONTHS),
-    where('userId', '==', userId),
-    orderBy('month', 'asc')
+    where('userId', '==', userId)
   )
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as MemberMonth))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as MemberMonth))
+    .sort((a, b) => a.month.localeCompare(b.month))
 }
 
 export async function initializeMemberMonths(userId: string, startMonth: string): Promise<void> {
@@ -89,21 +105,31 @@ export async function initializeMemberMonths(userId: string, startMonth: string)
 // ─── PAYMENTS ────────────────────────────────────────────────────
 
 export async function getUserPayments(userId: string): Promise<Payment[]> {
+  // FIXED: removed orderBy — sort client-side
   const q = query(
     collection(db, COLLECTIONS.PAYMENTS),
-    where('userId', '==', userId),
-    orderBy('createdAt', 'desc')
+    where('userId', '==', userId)
   )
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Payment))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Payment))
+    .sort((a, b) => {
+      const aTime = a.createdAt?.toMillis?.() ?? 0
+      const bTime = b.createdAt?.toMillis?.() ?? 0
+      return bTime - aTime  // newest first
+    })
 }
 
-export async function getAllPayments(statusFilter?: string): Promise<Payment[]> {
-  const constraints: QueryConstraint[] = [orderBy('createdAt', 'desc')]
-  if (statusFilter) constraints.unshift(where('status', '==', statusFilter))
-  const q = query(collection(db, COLLECTIONS.PAYMENTS), ...constraints)
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Payment))
+export async function getAllPayments(): Promise<Payment[]> {
+  // Simple collection scan — no index needed
+  const snap = await getDocs(collection(db, COLLECTIONS.PAYMENTS))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Payment))
+    .sort((a, b) => {
+      const aTime = a.createdAt?.toMillis?.() ?? 0
+      const bTime = b.createdAt?.toMillis?.() ?? 0
+      return bTime - aTime
+    })
 }
 
 export async function createPayment(data: Omit<Payment, 'id'>): Promise<string> {
@@ -117,13 +143,19 @@ export async function createPayment(data: Omit<Payment, 'id'>): Promise<string> 
 // ─── CONTRIBUTIONS ───────────────────────────────────────────────
 
 export async function getUserContributions(userId: string): Promise<Contribution[]> {
+  // FIXED: removed orderBy
   const q = query(
     collection(db, COLLECTIONS.CONTRIBUTIONS),
-    where('userId', '==', userId),
-    orderBy('createdAt', 'desc')
+    where('userId', '==', userId)
   )
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Contribution))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Contribution))
+    .sort((a, b) => {
+      const aTime = a.createdAt?.toMillis?.() ?? 0
+      const bTime = b.createdAt?.toMillis?.() ?? 0
+      return bTime - aTime
+    })
 }
 
 export async function getTotalContributions(): Promise<number> {
@@ -134,9 +166,14 @@ export async function getTotalContributions(): Promise<number> {
 // ─── INCOME ──────────────────────────────────────────────────────
 
 export async function getAllIncome(): Promise<Income[]> {
-  const q = query(collection(db, COLLECTIONS.INCOME), orderBy('createdAt', 'desc'))
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Income))
+  const snap = await getDocs(collection(db, COLLECTIONS.INCOME))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Income))
+    .sort((a, b) => {
+      const aTime = a.createdAt?.toMillis?.() ?? 0
+      const bTime = b.createdAt?.toMillis?.() ?? 0
+      return bTime - aTime
+    })
 }
 
 export async function addIncome(data: Omit<Income, 'id'>): Promise<string> {
@@ -155,9 +192,14 @@ export async function getTotalIncome(): Promise<number> {
 // ─── WITHDRAWALS ─────────────────────────────────────────────────
 
 export async function getAllWithdrawals(): Promise<Withdrawal[]> {
-  const q = query(collection(db, COLLECTIONS.WITHDRAWALS), orderBy('createdAt', 'desc'))
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Withdrawal))
+  const snap = await getDocs(collection(db, COLLECTIONS.WITHDRAWALS))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Withdrawal))
+    .sort((a, b) => {
+      const aTime = a.createdAt?.toMillis?.() ?? 0
+      const bTime = b.createdAt?.toMillis?.() ?? 0
+      return bTime - aTime
+    })
 }
 
 export async function createWithdrawal(data: Omit<Withdrawal, 'id'>): Promise<string> {
@@ -184,17 +226,23 @@ export async function createExitRequest(data: Omit<ExitRequest, 'id'>): Promise<
 }
 
 export async function getExitRequests(): Promise<ExitRequest[]> {
-  const q = query(collection(db, COLLECTIONS.EXIT_REQUESTS), orderBy('createdAt', 'desc'))
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as ExitRequest))
+  const snap = await getDocs(collection(db, COLLECTIONS.EXIT_REQUESTS))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as ExitRequest))
+    .sort((a, b) => {
+      const aTime = a.createdAt?.toMillis?.() ?? 0
+      const bTime = b.createdAt?.toMillis?.() ?? 0
+      return bTime - aTime
+    })
 }
 
 // ─── MILESTONES ──────────────────────────────────────────────────
 
 export async function getMilestones(): Promise<Milestone[]> {
-  const q = query(collection(db, COLLECTIONS.MILESTONES), orderBy('order', 'asc'))
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Milestone))
+  const snap = await getDocs(collection(db, COLLECTIONS.MILESTONES))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Milestone))
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 }
 
 export async function addMilestone(data: Omit<Milestone, 'id'>): Promise<string> {
@@ -230,25 +278,30 @@ export async function updateSettings(data: Record<string, any>): Promise<void> {
 }
 
 // ─── REAL-TIME LISTENERS ─────────────────────────────────────────
+// FIXED: removed orderBy from both — were causing silent failures
 
-export function subscribeToUserPayments(userId: string, callback: (payments: Payment[]) => void) {
+export function subscribeToUserPayments(userId: string, callback: (payments: Payment[]) => void, onError?: (e: Error) => void) {
   const q = query(
     collection(db, COLLECTIONS.PAYMENTS),
-    where('userId', '==', userId),
-    orderBy('createdAt', 'desc')
+    where('userId', '==', userId)
   )
   return onSnapshot(q, snap => {
-    callback(snap.docs.map(d => ({ id: d.id, ...d.data() } as Payment)))
-  })
+    const payments = snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as Payment))
+      .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0))
+    callback(payments)
+  }, onError)
 }
 
-export function subscribeToMemberMonths(userId: string, callback: (months: MemberMonth[]) => void) {
+export function subscribeToMemberMonths(userId: string, callback: (months: MemberMonth[]) => void, onError?: (e: Error) => void) {
   const q = query(
     collection(db, COLLECTIONS.MEMBER_MONTHS),
-    where('userId', '==', userId),
-    orderBy('month', 'asc')
+    where('userId', '==', userId)
   )
   return onSnapshot(q, snap => {
-    callback(snap.docs.map(d => ({ id: d.id, ...d.data() } as MemberMonth)))
-  })
+    const months = snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as MemberMonth))
+      .sort((a, b) => a.month.localeCompare(b.month))
+    callback(months)
+  }, onError)
 }
