@@ -22,17 +22,19 @@ export default function HistoryPage() {
 
   useEffect(() => {
     if (!profile?.id) return
-    Promise.all([
+    // 6s absolute deadline — never spin forever
+    const deadline = setTimeout(() => setLoading(false), 6000)
+    Promise.allSettled([
       getUserPayments(profile.id),
       getMemberMonths(profile.id),
-    ]).then(([p, m]) => {
-      setPayments(p)
-      setMemberMonths(m)
-    }).catch(e => {
-      console.error('History load error:', e.message)
+    ]).then(([pResult, mResult]) => {
+      if (pResult.status === 'fulfilled') setPayments(pResult.value)
+      if (mResult.status === 'fulfilled') setMemberMonths(mResult.value)
     }).finally(() => {
+      clearTimeout(deadline)
       setLoading(false)
     })
+    return () => clearTimeout(deadline)
   }, [profile?.id])
 
   const filtered = filter === 'all' ? payments : payments.filter(p => p.status === filter)
