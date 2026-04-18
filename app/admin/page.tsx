@@ -76,18 +76,38 @@ export default function AdminPage() {
 
   async function loadAll() {
     setLoading(true)
-    try {
-      const [p, m, pu, inc, w, ex, mil] = await Promise.all([
-        getAllPayments(), getAllMembers(), getPendingUsers(),
-        getAllIncome(), getAllWithdrawals(), getExitRequests(), getMilestones()
-      ])
-      setPayments(p); setMembers(m); setPendingUsers(pu)
-      setIncome(inc); setWithdrawals(w); setExits(ex); setMilestones(mil)
-      const progressMap: Record<string, number> = {}
-      mil.forEach(ms => { progressMap[ms.id] = ms.progress })
-      setMilestoneProgress(progressMap)
-    } catch (e: any) { toast.error('Failed to load data') }
-    finally { setLoading(false) }
+    // Promise.allSettled — every fetch completes independently.
+    // One stalled/denied fetch cannot freeze the entire admin panel.
+    const timeout = <T,>(p: Promise<T>, fallback: T) =>
+      Promise.race([p, new Promise<T>(r => setTimeout(() => r(fallback), 6000))])
+
+    const results = await Promise.allSettled([
+      timeout(getAllPayments(),   []),
+      timeout(getAllMembers(),    []),
+      timeout(getPendingUsers(), []),
+      timeout(getAllIncome(),     []),
+      timeout(getAllWithdrawals(),[]),
+      timeout(getExitRequests(), []),
+      timeout(getMilestones(),   []),
+    ])
+
+    const val = <T,>(r: PromiseSettledResult<T>, fb: T): T =>
+      r.status === 'fulfilled' ? r.value : fb
+
+    const p   = val(results[0], []) as Payment[]
+    const m   = val(results[1], []) as UserProfile[]
+    const pu  = val(results[2], []) as UserProfile[]
+    const inc = val(results[3], []) as Income[]
+    const w   = val(results[4], []) as Withdrawal[]
+    const ex  = val(results[5], []) as ExitRequest[]
+    const mil = val(results[6], []) as Milestone[]
+
+    setPayments(p); setMembers(m); setPendingUsers(pu)
+    setIncome(inc); setWithdrawals(w); setExits(ex); setMilestones(mil)
+    const progressMap: Record<string, number> = {}
+    mil.forEach(ms => { progressMap[ms.id] = ms.progress })
+    setMilestoneProgress(progressMap)
+    setLoading(false)
   }
 
   async function apiCall(endpoint: string, body: object) {
