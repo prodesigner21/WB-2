@@ -4,7 +4,7 @@
  * Keeps DB logic separated from UI and business logic.
  */
 import {
-  collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc,
+  collection, doc, getDoc, getDocFromServer, getDocs, setDoc, updateDoc, addDoc,
   query, where, orderBy, limit, onSnapshot, writeBatch,
   serverTimestamp, Timestamp, DocumentData, QueryConstraint
 } from 'firebase/firestore'
@@ -28,7 +28,9 @@ export const COLLECTIONS = {
 // ─── USER OPERATIONS ────────────────────────────────────────────
 
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
-  const snap = await getDoc(doc(db, COLLECTIONS.USERS, userId))
+  // Always fetch from server — bypasses local cache so role changes in
+  // Firebase console are reflected immediately on next login
+  const snap = await getDocFromServer(doc(db, COLLECTIONS.USERS, userId))
   return snap.exists() ? ({ id: snap.id, ...snap.data() } as UserProfile) : null
 }
 
