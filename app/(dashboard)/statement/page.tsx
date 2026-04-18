@@ -36,27 +36,41 @@ export default function StatementPage() {
 
   useEffect(() => {
     if (!profile?.id) return
-    Promise.all([
+    const deadline = setTimeout(() => setLoading(false), 8000)
+    const fallback0 = [] as any[]
+    const fallback1 = 0
+    Promise.allSettled([
       getUserPayments(profile.id),
       getUserContributions(profile.id),
       getMemberMonths(profile.id),
       getTotalContributions(),
       getTotalIncome(),
       getTotalWithdrawals(),
-    ]).then(([payments, contributions, memberMonths, totalContributions, totalIncome, totalWithdrawals]) => {
+    ]).then(results => {
+      const v = <T,>(r: PromiseSettledResult<T>, fb: T) =>
+        r.status === 'fulfilled' ? r.value : fb
+      const payments       = v(results[0], fallback0)
+      const contributions  = v(results[1], fallback0)
+      const memberMonths   = v(results[2], fallback0)
+      const totalContrib   = v(results[3], fallback1) as number
+      const totalIncome    = v(results[4], fallback1) as number
+      const totalWithdraw  = v(results[5], fallback1) as number
       setData({
         payments,
         contributions,
         memberMonths,
-        totalContributions,
+        totalContributions: totalContrib,
         totalIncome,
-        totalWithdrawals,
-        userTotal: sumUserContributions(contributions),
+        totalWithdrawals: totalWithdraw,
+        userTotal: sumUserContributions(contributions as any),
         profitShare: calculateProfitShare(totalIncome, profile.sharePercent),
-        netBalance: calculateNetBalance(totalContributions, totalIncome, totalWithdrawals),
+        netBalance: calculateNetBalance(totalContrib, totalIncome, totalWithdraw),
       })
+    }).finally(() => {
+      clearTimeout(deadline)
       setLoading(false)
     })
+    return () => clearTimeout(deadline)
   }, [profile?.id])
 
   async function downloadPDF() {
