@@ -34,26 +34,26 @@ export default function ExitPage() {
 
   useEffect(() => {
     if (!profile?.id) return
-    Promise.all([
+    const deadline = setTimeout(() => setLoading(false), 6000)
+    Promise.allSettled([
       getUserContributions(profile.id),
       getExitRequests(),
       getTotalIncome(),
-    ]).then(([contributions, exits, totalIncome]) => {
-      const userTotal = sumUserContributions(contributions)
-      const profitShare = calculateProfitShare(totalIncome, profile.sharePercent)
+    ]).then(results => {
+      const contributions = results[0].status === 'fulfilled' ? results[0].value : []
+      const exits         = results[1].status === 'fulfilled' ? results[1].value : []
+      const totalIncome   = results[2].status === 'fulfilled' ? results[2].value : 0
+      const userTotal = sumUserContributions(contributions as any)
+      const profitShare = calculateProfitShare(totalIncome as number, profile.sharePercent)
       const { exitFee, netPayout } = calculateExitPayout(userTotal, profitShare)
-
-      setPreview({
-        totalContributions: userTotal,
-        profitShare,
-        exitFee,
-        finalPayout: netPayout,
-      })
-
-      const myExit = exits.find(e => e.userId === profile.id && e.status === 'pending')
+      setPreview({ totalContributions: userTotal, profitShare, exitFee, finalPayout: netPayout })
+      const myExit = (exits as any[]).find((e: any) => e.userId === profile.id && e.status === 'pending')
       setExistingRequest(myExit || null)
+    }).finally(() => {
+      clearTimeout(deadline)
       setLoading(false)
     })
+    return () => clearTimeout(deadline)
   }, [profile?.id])
 
   async function handleSubmit() {
