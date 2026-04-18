@@ -35,14 +35,27 @@ export default function PayPage() {
   const selectedMonths = unpaid.slice(0, selectedCount).map(m => m.month)
   const totalAmount = selectedCount * MONTHLY_AMOUNT
 
-  // ── Subscribe to member months ────────────────────────
+  // ── Subscribe to member months — with 6s absolute timeout ──
   useEffect(() => {
     if (!profile?.id) return
-    const unsub = subscribeToMemberMonths(profile.id, (months) => {
-      setMemberMonths(months)
-      setMonthsLoading(false)
-    })
-    return unsub
+
+    // Hard deadline — never spin longer than 6 seconds
+    const deadline = setTimeout(() => setMonthsLoading(false), 6000)
+
+    const unsub = subscribeToMemberMonths(
+      profile.id,
+      (months) => {
+        clearTimeout(deadline)
+        setMemberMonths(months)
+        setMonthsLoading(false)
+      },
+      (err) => {
+        clearTimeout(deadline)
+        console.error('memberMonths error:', err.code, err.message)
+        setMonthsLoading(false)
+      }
+    )
+    return () => { clearTimeout(deadline); unsub() }
   }, [profile?.id])
 
   // ── Handle Paystack callback verification ─────────────
