@@ -22,7 +22,7 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import {
   Shield, Users, CreditCard, TrendingUp, ArrowDownLeft,
   CheckCircle, XCircle, Plus, BarChart2, MapPin,
-  RefreshCw, Activity, DollarSign, Wallet, Clock
+  RefreshCw, Activity, DollarSign, Wallet, Clock, FlaskConical, Trash2
 } from 'lucide-react'
 import { auth } from '@/lib/firebase'
 import axios from 'axios'
@@ -36,7 +36,7 @@ import { Bar } from 'react-chartjs-2'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend, LineElement, PointElement, Filler)
 
-type Tab = 'overview' | 'payments' | 'members' | 'income' | 'withdrawals' | 'milestones' | 'exits'
+type Tab = 'overview' | 'payments' | 'members' | 'income' | 'withdrawals' | 'milestones' | 'exits' | 'testdata'
 
 export default function AdminPage() {
   const { profile, isAdmin, initialized } = useAuth()
@@ -65,6 +65,8 @@ export default function AdminPage() {
   const [milestoneProgress, setMilestoneProgress] = useState<Record<string, number>>({})
   const [rejectReason, setRejectReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [testDataLoading, setTestDataLoading] = useState(false)
+  const [testDataResult, setTestDataResult] = useState<any>(null)
 
   useEffect(() => {
     if (initialized && !isAdmin) { router.replace('/dashboard'); return }
@@ -181,6 +183,24 @@ export default function AdminPage() {
     } catch { toast.error('Failed') }
   }
 
+  async function testDataAction(action: string) {
+    if (action === 'wipe_all' || action === 'wipe') {
+      if (!confirm(action === 'wipe_all'
+        ? 'DELETE ALL data including test members? (your admin account kept)'
+        : 'Wipe all transactional data? (user accounts kept)')) return
+    }
+    setTestDataLoading(true)
+    setTestDataResult(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      const res = await axios.post('/api/admin/test-data', { action }, { headers: { Authorization: `Bearer \${token}` } })
+      setTestDataResult(res.data)
+      toast.success(action === 'seed' ? 'Test data seeded!' : 'Data wiped!')
+      loadAll()
+    } catch (e: any) { toast.error(e.response?.data?.error || 'Failed') }
+    finally { setTestDataLoading(false) }
+  }
+
   async function recalculateShares() {
     try {
       await apiCall('/api/admin/users', { action: 'recalculate_shares' })
@@ -206,6 +226,7 @@ export default function AdminPage() {
     { id: 'withdrawals' as Tab, label: 'Withdrawals', icon: ArrowDownLeft },
     { id: 'milestones' as Tab, label: 'Milestones', icon: MapPin },
     { id: 'exits' as Tab, label: 'Exits', icon: Activity },
+    { id: 'testdata' as Tab, label: '🧪 Test Data', icon: FlaskConical },
   ]
 
   if (!initialized || !isAdmin) return <div className="min-h-screen bg-vault-950 flex items-center justify-center"><Spinner size={32} /></div>
@@ -547,6 +568,62 @@ export default function AdminPage() {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* ── TEST DATA TAB ──────────────────────────── */}
+              {tab === 'testdata' && (
+                <div className="space-y-6">
+                  <SectionHeader title="Test Data" subtitle="Seed realistic data or wipe everything for a clean slate." />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="card p-5 space-y-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                        <FlaskConical size={18} className="text-emerald-400"/>
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-white text-sm">Seed Test Data</h3>
+                        <p className="text-xs text-white/40 mt-1">Creates 3 members, 5 months each, income records, withdrawals & milestones.</p>
+                      </div>
+                      <button onClick={() => testDataAction('seed')} disabled={testDataLoading}
+                        className="btn-primary w-full text-sm flex items-center justify-center gap-2 py-2.5">
+                        {testDataLoading ? <Spinner size={14}/> : <FlaskConical size={14}/>} Seed Data
+                      </button>
+                    </div>
+                    <div className="card p-5 space-y-3 border-yellow-500/10">
+                      <div className="w-10 h-10 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
+                        <Trash2 size={18} className="text-yellow-400"/>
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-white text-sm">Wipe Transactions</h3>
+                        <p className="text-xs text-white/40 mt-1">Deletes payments, contributions, months, income, withdrawals. Keeps user accounts.</p>
+                      </div>
+                      <button onClick={() => testDataAction('wipe')} disabled={testDataLoading}
+                        className="btn-gold w-full text-sm flex items-center justify-center gap-2 py-2.5">
+                        {testDataLoading ? <Spinner size={14}/> : <Trash2 size={14}/>} Wipe Transactions
+                      </button>
+                    </div>
+                    <div className="card p-5 space-y-3 border-red-500/10">
+                      <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                        <Trash2 size={18} className="text-red-400"/>
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-white text-sm">Full Reset</h3>
+                        <p className="text-xs text-white/40 mt-1">Deletes ALL data including test members. Only your admin account is kept.</p>
+                      </div>
+                      <button onClick={() => testDataAction('wipe_all')} disabled={testDataLoading}
+                        className="btn-danger w-full text-sm flex items-center justify-center gap-2 py-2.5">
+                        {testDataLoading ? <Spinner size={14}/> : <Trash2 size={14}/>} Full Reset
+                      </button>
+                    </div>
+                  </div>
+                  {testDataResult && (
+                    <div className="card p-4 bg-white/[0.02]">
+                      <p className="text-xs text-white/30 uppercase tracking-wider mb-2">Result</p>
+                      <pre className="text-xs text-emerald-400 font-mono whitespace-pre-wrap">
+                        {JSON.stringify(testDataResult, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
 
