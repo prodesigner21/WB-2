@@ -28,6 +28,9 @@ export default function HistoryPage() {
     ]).then(([p, m]) => {
       setPayments(p)
       setMemberMonths(m)
+    }).catch(e => {
+      console.error('History load error:', e.message)
+    }).finally(() => {
       setLoading(false)
     })
   }, [profile?.id])
