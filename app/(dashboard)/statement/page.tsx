@@ -35,7 +35,10 @@ export default function StatementPage() {
   } | null>(null)
 
   useEffect(() => {
-    if (!profile?.id) return
+    if (!profile?.id) {
+      setLoading(false)
+      return
+    }
     const deadline = setTimeout(() => setLoading(false), 8000)
     const fallback0 = [] as any[]
     const fallback1 = 0
