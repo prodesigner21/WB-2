@@ -111,8 +111,12 @@ export function useAuth() {
   // ── Refresh profile ────────────────────────────────────────────
   const refreshProfile = useCallback(async () => {
     if (!firebaseUser) return
+    try {
     const updated = await getUserProfile(firebaseUser.uid)
     setProfile(updated)
+    } catch (err: any) {
+      console.error('useAuth: refreshProfile failed:', err?.code || err?.message)
+    }
   }, [firebaseUser])
 
   return {
