@@ -40,6 +40,7 @@ export default function PayPage() {
     if (!profile?.id) {
       setMonthsLoading(false)
       return
+    }
 
     // Hard deadline — never spin longer than 6 seconds
     const deadline = setTimeout(() => setMonthsLoading(false), 6000)
