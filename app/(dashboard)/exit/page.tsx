@@ -33,7 +33,10 @@ export default function ExitPage() {
   } | null>(null)
 
   useEffect(() => {
-    if (!profile?.id) return
+    if (!profile?.id) {
+      setLoading(false)
+      return
+    }
     const deadline = setTimeout(() => setLoading(false), 6000)
     Promise.allSettled([
       getUserContributions(profile.id),
