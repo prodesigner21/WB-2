@@ -29,8 +29,13 @@ export function useAuth() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user)
       if (user) {
+        try{
         const userProfile = await getUserProfile(user.uid)
         setProfile(userProfile)
+        } catch (err: any){
+          console.error('useAuth: getUserProfile failed:', err?.code || err?.message)
+          setProfile(null)
+        }
       } else {
         setProfile(null)
       }
