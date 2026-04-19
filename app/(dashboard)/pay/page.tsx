@@ -37,7 +37,9 @@ export default function PayPage() {
 
   // ── Subscribe to member months — with 6s absolute timeout ──
   useEffect(() => {
-    if (!profile?.id) return
+    if (!profile?.id) {
+      setMonthsLoading(false)
+      return
 
     // Hard deadline — never spin longer than 6 seconds
     const deadline = setTimeout(() => setMonthsLoading(false), 6000)
